@@ -27,7 +27,7 @@ spec:
           app:
             image: &img
               repository: ghcr.io/navidrome/navidrome
-              tag: 0.61.2@sha256:9fa40b3d8dec43ceb2213d1fa551da3dcfef6ac6d19c2e534efb92527c2bafd2
+              tag: 0.63.1@sha256:7c43af9f651654e97278be871705aae85a4ee0fa4b310337989699a8ada9b3ed
             env:
               TZ: "${CONFIG_TZ}"
               ND_BASEURL: "https://${APP_DNS_NAVIDROME}"
