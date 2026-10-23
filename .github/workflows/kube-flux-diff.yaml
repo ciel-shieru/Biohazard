@@ -67,6 +67,9 @@ jobs:
       artifact: "${{ steps.split.outputs.artifact }}"
 
   add-comments:
+    # Fork PRs do not receive repository secrets. Keep validation/diff jobs
+    # available to forks while skipping only the privileged comment publisher.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     name: Flux Diff - Add Comments
     needs: [flux-diff]
     runs-on: ubuntu-latest
