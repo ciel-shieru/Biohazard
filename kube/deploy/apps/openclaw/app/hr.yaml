@@ -104,7 +104,7 @@ spec:
             securityContext: *sc
             probes: *probes
           qwen:
-            image:
+            image: &qwen-image
               repository: ghcr.io/qwenlm/qwen-code
               tag: 0.25.2@sha256:775a0baabd057fa867d2973662b24d35563ce454f45001fca2a6137e5d5ea7ef
             command: ["/usr/local/share/npm-global/bin/qwen", "serve", "--hostname", "0.0.0.0", "--port", "$(HTTP_PORT)", "--allow-origin", "https://${APP_DNS_QWEN_CODE}"]
@@ -115,10 +115,11 @@ spec:
               QWEN_USAGE_STATISTICS_ENABLED: 0
               # Two-hour API/stream timeout defaults (milliseconds) for supported OpenAI-compatible and Anthropic paths.
               # Explicit modelProviders timeout/streamIdleTimeoutMs values take precedence; native Google GenAI does not consume this API timeout.
-              # Some feature-specific model side queries also have independent hard-coded AbortSignal deadlines.
               QWEN_CODE_API_TIMEOUT_MS: "7200000"
               QWEN_STREAM_IDLE_TIMEOUT_MS: "7200000"
               QWEN_STREAM_MAX_LIFETIME_MS: "7200000"
+              # Two-hour web-fetch LLM summarization timeout; the separate network download timeout remains unchanged.
+              QWEN_WEB_FETCH_PROCESSING_TIMEOUT_MS: "7200000"
               # Limit Qwen Code's internal tool and agent fan-out; this is not a process-wide provider request semaphore.
               QWEN_CODE_MAX_BACKGROUND_AGENTS: "1"
               QWEN_CODE_MAX_TOOL_CONCURRENCY: "1"
@@ -149,6 +150,81 @@ spec:
                   sleep 60;
                 done;
             env: *env
+            securityContext: *sc
+          qwen-settings:
+            image: *qwen-image
+            command:
+              - node
+              - -e
+              - |
+                const fs = require('node:fs');
+                const path = require('node:path');
+                const crypto = require('node:crypto');
+
+                const home = process.env.QWEN_HOME;
+                if (!home || !path.isAbsolute(home)) {
+                  throw new Error('QWEN_HOME must be an absolute path');
+                }
+                fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+                if (!fs.lstatSync(home).isDirectory()) {
+                  throw new Error('QWEN_HOME must be a real directory');
+                }
+
+                const settingsPath = path.join(home, 'settings.json');
+                let settings = {};
+                try {
+                  const stat = fs.lstatSync(settingsPath);
+                  if (!stat.isFile()) {
+                    throw new Error('Qwen settings.json must be a regular file');
+                  }
+                  settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+                } catch (error) {
+                  if (error.code !== 'ENOENT') throw error;
+                }
+                if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+                  throw new Error('Qwen settings.json must contain a JSON object');
+                }
+
+                function objectAt(parent, key) {
+                  if (parent[key] === undefined) parent[key] = {};
+                  const value = parent[key];
+                  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                    throw new Error('Invalid Qwen settings object at ' + key);
+                  }
+                  return value;
+                }
+
+                const permissions = objectAt(settings, 'permissions');
+                const autoMode = objectAt(permissions, 'autoMode');
+                const classifier = objectAt(autoMode, 'classifier');
+                const classifierTimeouts = objectAt(classifier, 'timeouts');
+                classifierTimeouts.stage1Ms = 7200000;
+                classifierTimeouts.stage2Ms = 7200000;
+
+                settings.visionBridgeTimeoutMs = 7200000;
+
+                const omni = objectAt(settings, 'omni');
+                const memory = objectAt(omni, 'memory');
+                const recall = objectAt(memory, 'recall');
+                const sideQuery = objectAt(recall, 'sideQuery');
+                sideQuery.timeoutMs = 7200000;
+
+                const temporaryPath = settingsPath + '.tmp-' + process.pid + '-' + crypto.randomUUID();
+                let fd;
+                try {
+                  fd = fs.openSync(temporaryPath, 'wx', 0o600);
+                  fs.writeFileSync(fd, JSON.stringify(settings, null, 2) + '\n');
+                  fs.fsyncSync(fd);
+                  fs.closeSync(fd);
+                  fd = undefined;
+                  fs.renameSync(temporaryPath, settingsPath);
+                } catch (error) {
+                  if (fd !== undefined) fs.closeSync(fd);
+                  fs.rmSync(temporaryPath, { force: true });
+                  throw error;
+                }
+            env:
+              QWEN_HOME: "/home/openclaw/.qwen"
             securityContext: *sc
     service:
       app:
