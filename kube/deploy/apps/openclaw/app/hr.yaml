@@ -111,10 +111,10 @@ spec:
             env:
               <<: *env
               HTTP_PORT: &qwen-http 8083
-              QWEN_HOME: "/home/openclaw/.qwen"
+              QWEN_HOME: &qwen-home "/home/openclaw/.qwen"
               QWEN_USAGE_STATISTICS_ENABLED: 0
               # Two-hour API/stream timeout defaults (milliseconds) for supported OpenAI-compatible and Anthropic paths.
-              # Explicit modelProviders timeout/streamIdleTimeoutMs values take precedence; native Google GenAI does not consume this API timeout.
+              # Provider generationConfig timeout/streamIdleTimeoutMs/streamMaxLifetimeMs values take precedence; native Google GenAI does not consume this API timeout.
               QWEN_CODE_API_TIMEOUT_MS: "7200000"
               QWEN_STREAM_IDLE_TIMEOUT_MS: "7200000"
               QWEN_STREAM_MAX_LIFETIME_MS: "7200000"
@@ -151,6 +151,7 @@ spec:
                 done;
             env: *env
             securityContext: *sc
+          # Merge timeout overrides into persistent Qwen settings before application containers start.
           qwen-settings:
             image: *qwen-image
             command:
@@ -173,11 +174,18 @@ spec:
                 const settingsPath = path.join(home, 'settings.json');
                 let settings = {};
                 try {
-                  const stat = fs.lstatSync(settingsPath);
-                  if (!stat.isFile()) {
-                    throw new Error('Qwen settings.json must be a regular file');
+                  const fd = fs.openSync(
+                    settingsPath,
+                    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+                  );
+                  try {
+                    if (!fs.fstatSync(fd).isFile()) {
+                      throw new Error('Qwen settings.json must be a regular file');
+                    }
+                    settings = JSON.parse(fs.readFileSync(fd, 'utf8'));
+                  } finally {
+                    fs.closeSync(fd);
                   }
-                  settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
                 } catch (error) {
                   if (error.code !== 'ENOENT') throw error;
                 }
@@ -224,7 +232,7 @@ spec:
                   throw error;
                 }
             env:
-              QWEN_HOME: "/home/openclaw/.qwen"
+              QWEN_HOME: *qwen-home
             securityContext: *sc
     service:
       app:
