@@ -115,6 +115,7 @@ spec:
               QWEN_USAGE_STATISTICS_ENABLED: 0
               # Two-hour API/stream timeout defaults (milliseconds) for supported OpenAI-compatible and Anthropic paths.
               # Explicit modelProviders timeout/streamIdleTimeoutMs values take precedence; native Google GenAI does not consume this API timeout.
+              # Some feature-specific model side queries also have independent hard-coded AbortSignal deadlines.
               QWEN_CODE_API_TIMEOUT_MS: "7200000"
               QWEN_STREAM_IDLE_TIMEOUT_MS: "7200000"
               QWEN_STREAM_MAX_LIFETIME_MS: "7200000"
