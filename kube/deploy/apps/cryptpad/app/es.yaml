@@ -68,27 +68,21 @@ spec:
               },
               front: [
                   {
-                      url: '',
                       host: '127.0.0.1',
                       port: 3010,
-                      serverId: '',
                   },
               ],
               core: [
                   {
-                      url: '',
                       host: '127.0.0.1',
                       port: 3020,
-                      serverId: '',
                   },
               ],
               storage: [
                   {
-                      url: '',
                       host: '127.0.0.1',
                       port: 3030,
                       wsPort: 3040,
-                      serverId: '',
                   },
               ],
           };

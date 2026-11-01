@@ -22,6 +22,7 @@ spec:
             ingress.home.arpa/envoy-external: allow
             authentik.home.arpa/oidc: allow
             egress.home.arpa/github: allow # will be de-escalated
+            egress.home.arpa/internet: allow # npm dependencies; removed after init
             egress.home.arpa/apiserver: allow # will be de-escalated
         serviceAccount:
           identifier: app
@@ -76,6 +77,7 @@ spec:
                 rm -rf "$plugin_dir"
                 install -d "$plugin_dir"
                 git -C "$work_dir" archive FETCH_HEAD | tar -x -C "$plugin_dir"
+                npm --prefix "$plugin_dir" ci --omit=dev --ignore-scripts --no-audit --no-fund
             env:
               TZ: "${CONFIG_TZ}"
               GIT_CONFIG_GLOBAL: "/tmp/.gitconfig"
@@ -92,7 +94,7 @@ spec:
             image:
               repository: registry.k8s.io/kubectl
               tag: v1.37.2@sha256:fe049faa65ae483ac200009a949a68fa4c9985daea12c9cb1195c9c7965301fc
-            command: ["kubectl", "label", "pods", "--namespace", "$(POD_NS)", "$(POD_NAME)", "egress.home.arpa/github-", "egress.home.arpa/apiserver-"]
+            command: ["kubectl", "label", "pods", "--namespace", "$(POD_NS)", "$(POD_NAME)", "egress.home.arpa/github-", "egress.home.arpa/apiserver-", "egress.home.arpa/internet-"]
             env:
               POD_NAME:
                 valueFrom:
