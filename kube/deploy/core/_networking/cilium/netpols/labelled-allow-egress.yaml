@@ -598,3 +598,34 @@ spec:
   egress:
     - toCIDRSet:
         - cidr: "${IP_AD_CIDR:=127.0.0.1/32}"
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/cilium.io/ciliumclusterwidenetworkpolicy_v2.json
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: labelled-allow-egress-npm
+spec:
+  endpointSelector:
+    matchLabels:
+      egress.home.arpa/npm: allow
+  egress:
+    - toFQDNs:
+        - matchName: "registry.npmjs.org"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: "ANY"
+          rules:
+            dns:
+              - matchName: "registry.npmjs.org"
