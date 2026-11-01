@@ -55,22 +55,34 @@ spec:
           01-install-onlyoffice:
             image: *img
             env: *env
-            command: ["/cryptpad/install-onlyoffice.sh", "--accept-license", "--trust-repository"]
+            command: ["/cryptpad/install-office.sh", "--accept-license", "--trust-repository"]
             securityContext: *sc
-          # 02-install-plugin-sso:
-          #   image: *img
-          #   command: ["/usr/bin/env", "bash", "-c"]
-          #   args:
-          #     - |
-          #       cd /cryptpad/lib/plugins
-          #       git clone --no-checkout --filter=tree:0 --depth 1 https://github.com/cryptpad/sso || true
-          #       cd sso
-          #       git fetch --depth 1 origin $(SSO_VERSION)
-          #       git checkout FETCH_HEAD
-          #   env:
-          #     # renovate: datasource=github-tags depName=cryptpad/sso
-          #     SSO_VERSION: "0.6.0"
-          #   securityContext: *sc
+          02-install-plugin-sso:
+            image: *img
+            command: ["/bin/bash", "-euo", "pipefail", "-c"]
+            args:
+              - |
+                work_dir="$(mktemp -d /tmp/cryptpad-sso.XXXXXX)"
+                trap 'rm -rf "$work_dir"' EXIT
+                git init "$work_dir"
+                git -C "$work_dir" remote add origin https://github.com/cryptpad/sso.git
+                git -C "$work_dir" fetch --depth=1 origin "refs/tags/${SSO_VERSION}"
+                actual_commit="$(git -C "$work_dir" rev-parse FETCH_HEAD)"
+                if [[ "$actual_commit" != "$SSO_COMMIT" ]]; then
+                  printf 'CryptPad SSO commit mismatch: expected %s, got %s\\n' "$SSO_COMMIT" "$actual_commit" >&2
+                  exit 1
+                fi
+                plugin_dir=/cryptpad/lib/plugins/sso
+                rm -rf "$plugin_dir"
+                install -d "$plugin_dir"
+                git -C "$work_dir" archive FETCH_HEAD | tar -x -C "$plugin_dir"
+            env:
+              TZ: "${CONFIG_TZ}"
+              GIT_CONFIG_GLOBAL: "/tmp/.gitconfig"
+              GIT_CONFIG_SYSTEM: "/tmp/.gitconfig"
+              SSO_VERSION: "1.0.0"
+              SSO_COMMIT: "c149256066f6684dfc0fef701d4096d6ef7bbd9c"
+            securityContext: *sc
           03-npm-build:
             image: *img
             command: ["npm", "run", "build"]
@@ -99,8 +111,8 @@ spec:
             port: &http 3000
             protocol: HTTP
             appProtocol: http
-          ws:
-            port: &ws 3003
+          safe:
+            port: &safe 3001
             protocol: HTTP
             appProtocol: http
     route:
@@ -108,7 +120,7 @@ spec:
         # annotations:
         #   external-dns.alpha.kubernetes.io/target: "${DNS_CF:=cf}"
         #   external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
-        hostnames: ["${APP_DNS_CRYPTPAD:=cryptpad}", "${APP_DNS_CRYPTPAD_SAFE:=cryptpad}"]
+        hostnames: ["${APP_DNS_CRYPTPAD:=cryptpad}"]
         parentRefs:
           - name: envoy-internal
             namespace: ingress
@@ -129,10 +141,20 @@ spec:
                       value: unsafe-none
             backendRefs:
               - identifier: app
-                port: *ws
+                port: *http
           - backendRefs:
               - identifier: app
                 port: *http
+      safe:
+        hostnames: ["${APP_DNS_CRYPTPAD_SAFE:=cryptpad}"]
+        parentRefs:
+          - name: envoy-internal
+            namespace: ingress
+            sectionName: internal
+        rules:
+          - backendRefs:
+              - identifier: app
+                port: *safe
     persistence:
       config:
         type: secret
@@ -140,6 +162,8 @@ spec:
         globalMounts:
           - subPath: config.js
             path: /cryptpad/config/config.js
+          - subPath: infra.js
+            path: /cryptpad/config/infra.js
           - subPath: sso.js
             path: /cryptpad/config/sso.js
       data:
@@ -161,13 +185,6 @@ spec:
             path: /cryptpad/www/common/onlyoffice/dist
           - subPath: onlyoffice-conf
             path: /cryptpad/onlyoffice-conf
-      sso:
-        type: image
-        image:
-          repository: jank.ing/jjgadgets/cryptpad-sso
-          tag: 0.4.0@sha256:5865a32cca8bca20277e6799f7c1c183d4c371dc8a4995d799cf517edf85bf58
-        globalMounts:
-          - path: /cryptpad/lib/plugins/sso
       tmp:
         type: emptyDir
         medium: Memory

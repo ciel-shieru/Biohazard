@@ -21,12 +21,18 @@ spec:
       data:
         config.js: |
           module.exports = {
-              httpUnsafeOrigin: 'https://{{ .APP_DNS_CRYPTPAD }}',
-              httpSafeOrigin: "https://{{ .APP_DNS_CRYPTPAD_SAFE }}",
-              httpAddress: '0.0.0.0',
-              httpPort: 3000,
-              websocketPort: 3003,
-              maxWorkers: 3,
+              maxWorkers: {
+                  core: 1,
+                  storage: 1,
+                  "storage-http": 1,
+                  http: 1,
+              },
+              maxJobs: {
+                  core: 10,
+                  storage: 10,
+                  "storage-http": 10,
+                  http: 10,
+              },
               otpSessionExpiration: 7*24, // hours
               enforceMFA: false, // SSO
               logIP: true, // internal use only, so no public IPs logged
@@ -47,6 +53,44 @@ spec:
               logLevel: 'feedback', // feedback + info and below
               logFeedback: true,
               verbose: false,
+          };
+        infra.js: |
+          module.exports = {
+              public: {
+                  origin: 'https://{{ .APP_DNS_CRYPTPAD }}',
+                  sandboxOrigin: 'https://{{ .APP_DNS_CRYPTPAD_SAFE }}',
+                  httpHost: '0.0.0.0',
+                  httpPort: 3000,
+                  httpSafePort: 3001,
+                  externalWebsocketURL: undefined,
+                  fileHost: undefined,
+                  httpServerId: '',
+              },
+              front: [
+                  {
+                      url: '',
+                      host: '127.0.0.1',
+                      port: 3010,
+                      serverId: '',
+                  },
+              ],
+              core: [
+                  {
+                      url: '',
+                      host: '127.0.0.1',
+                      port: 3020,
+                      serverId: '',
+                  },
+              ],
+              storage: [
+                  {
+                      url: '',
+                      host: '127.0.0.1',
+                      port: 3030,
+                      wsPort: 3040,
+                      serverId: '',
+                  },
+              ],
           };
         sso.js: |
           module.exports = {
