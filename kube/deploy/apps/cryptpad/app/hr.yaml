@@ -53,7 +53,7 @@ spec:
               readiness:
                 enabled: true
         initContainers:
-          01-install-onlyoffice:
+          01-install-office:
             image: *img
             env: *env
             command: ["/cryptpad/install-office.sh", "--accept-license", "--trust-repository"]
@@ -70,7 +70,7 @@ spec:
                 git -C "$work_dir" fetch --depth=1 origin "refs/tags/${SSO_VERSION}"
                 actual_commit="$(git -C "$work_dir" rev-parse FETCH_HEAD)"
                 if [[ "$actual_commit" != "$SSO_COMMIT" ]]; then
-                  printf 'CryptPad SSO commit mismatch: expected %s, got %s\\n' "$SSO_COMMIT" "$actual_commit" >&2
+                  printf 'CryptPad SSO commit mismatch: expected %s, got %s\n' "$SSO_COMMIT" "$actual_commit" >&2
                   exit 1
                 fi
                 plugin_dir=/cryptpad/lib/plugins/sso
