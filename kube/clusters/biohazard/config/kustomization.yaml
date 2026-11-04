@@ -5,6 +5,7 @@ resources:
   - ./externalsecret-secrets.yaml
   - ./externalsecret-vars.yaml
   - ./gvisor.yaml
+  - ./gvisor-i915.yaml
 #secretGenerator:
 #  - name: biohazard-secrets
 #    namespace: flux-system

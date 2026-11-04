@@ -1,0 +1,11 @@
+version: v1alpha1
+metadata:
+  name: gvisor-i915
+  version: "0.1.0+{{GVISOR_REV_SHORT}}"
+  author: JJGadgets
+  description: |
+    Experimental gVisor runtime with the restricted Intel i915 render-node proxy.
+    Installs the forked runsc binary and its matching sidecars at a versioned path.
+  compatibility:
+    talos:
+      version: ">= v1.13.0"

@@ -1,0 +1,6 @@
+# Dedicated shim configuration for the ciel-shieru/gvisor i915 fork.
+# runsc and its sidecars are versioned together inside this path.
+binary_name = "/usr/local/libexec/gvisor-i915/{{GVISOR_COMMIT}}/runsc-i915"
+
+[runsc_config]
+i915proxy = "true"

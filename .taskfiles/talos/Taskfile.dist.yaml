@@ -91,10 +91,18 @@ tasks:
       C: '{{ or .C (fail "Missing C environment variable for cluster!") }}'
       NODE: '{{ or .NODE (fail "Missing `NODE` environment variable!") }}'
       VERSION: '{{ or .VERSION (fail "Missing `VERSION` environment variable!") }}'
+      IMAGE: '{{ or .IMAGE "" }}'
       DNS_CLUSTER:
         sh: |
           op read "op://{{.C}}/.{{.C}}-vars/DNS_CLUSTER"
+    env:
+      INSTALLER_IMAGE: '{{.IMAGE}}'
     cmds:
       - kubectl drain --delete-emptydir-data --ignore-daemonsets --timeout 0 --skip-wait-for-delete-timeout 1 --grace-period 60 --chunk-size 0 --disable-eviction --pod-selector rook_cluster!=rook-ceph {{.NODE}}
       - sleep 60 # let stuff shutdown properly
-      - talosctl upgrade --reboot-mode powercycle --debug --nodes {{.NODE}} --image "$(task t:run C={{.C}} -- genurl installer --node {{.NODE}}.{{.DNS_CLUSTER}} --secure-boot --version {{.VERSION}} 2>/dev/null)"
+      - |-
+        if [ -z "${INSTALLER_IMAGE}" ]; then
+          INSTALLER_IMAGE="$(task t:run C={{.C}} -- genurl installer --node {{.NODE}}.{{.DNS_CLUSTER}} --secure-boot --version {{.VERSION}} 2>/dev/null)"
+        fi
+        test -n "${INSTALLER_IMAGE}"
+        talosctl upgrade --reboot-mode powercycle --debug --nodes {{.NODE}} --image "${INSTALLER_IMAGE}"

@@ -48,6 +48,9 @@ nodes:
             - siderolabs/mei # Intel 12 gen & newer
 
   - &m720q
+    talosImageURL: "ghcr.io/jjgadgets/talos-installer-gvisor-i915-m720q-21f0865f92e48e6907bdf0a87ed804147cd3b1d1"
+    nodeLabels:
+      gvisor-i915.home.arpa/enabled: "true"
     hostname: "ange.${DNS_CLUSTER}" # HP Pro Mini 400 G9, i5-12500T 6C12T P, 64GB RAM, 256GB OS NVMe
     ipAddress: "${IP_ROUTER_VLAN_K8S_PREFIX}1"
     controlPlane: true
@@ -153,6 +156,9 @@ nodes:
     #         devices.system.cpu.intel_pstate.hwp_dynamic_boost: "1"
 
   - &ms01
+    talosImageURL: "ghcr.io/jjgadgets/talos-installer-gvisor-i915-ms01-21f0865f92e48e6907bdf0a87ed804147cd3b1d1"
+    nodeLabels:
+      gvisor-i915.home.arpa/enabled: "true"
     hostname: "dorothy.${DNS_CLUSTER}" # ms01, i5-8500T 6C6T, 64GB RAM, 256GB OS NVMe
     ipAddress: "${IP_ROUTER_VLAN_K8S_PREFIX}5"
     controlPlane: false

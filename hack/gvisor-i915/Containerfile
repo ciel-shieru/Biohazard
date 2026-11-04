@@ -1,0 +1,6 @@
+FROM scratch
+ARG GVISOR_REV
+LABEL org.opencontainers.image.source="https://github.com/ciel-shieru/gvisor"
+LABEL org.opencontainers.image.revision="${GVISOR_REV}"
+COPY manifest.yaml /manifest.yaml
+COPY rootfs/ /
