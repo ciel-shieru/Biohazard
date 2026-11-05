@@ -24,7 +24,7 @@ spec:
           indexer:
             image: &img
               repository: ghcr.io/ciel-shieru/biohazard-code-graph-rag
-              tag: build-pending
+              tag: sha-e4bcb753b44fa139b6b35f9bc5b325c2c6ca4ecb@sha256:bf9939182e1b3226625744e7a740a074ef6b9d6f989e8beb71e920f207ba8acb
             args: ["watch", "--repo-path", "/workspace", "--no-start-stack"]
             workingDir: /var/lib/cgr
             env: &cgr-env
