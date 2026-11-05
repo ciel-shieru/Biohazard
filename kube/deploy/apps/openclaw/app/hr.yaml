@@ -94,12 +94,23 @@ spec:
             env:
               <<: *env
               HTTP_PORT: &opencode-http 8081
+              OPENCODE_CONFIG_CONTENT:
+                valueFrom:
+                  configMapKeyRef:
+                    name: openclaw-code-intel
+                    key: opencode.json
+              CODE_INTEL_MCP_TOKEN:
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-code-intel-secrets
+                    key: MCP_HTTP_AUTH_TOKEN
               MEMINI_API_KEY:
                 valueFrom:
                   secretKeyRef:
                     name: openclaw-secrets
                     key: MEMINI_KEY_BIOHAZARD_OPENCODE
-            envFrom: *envFrom
+            envFrom:
+              - *ocSecrets
             workingDir: *pvc
             securityContext: *sc
             probes: *probes
@@ -151,6 +162,29 @@ spec:
                   sleep 60;
                 done;
             env: *env
+            securityContext: *sc
+          configure-qwen-mcp:
+            image:
+              repository: ghcr.io/qwenlm/qwen-code
+              tag: 0.26.4@sha256:01164fc4d4e443591ba22581a19e1e910895ffe290595a7e8cb1a04d1d6da2a5
+            command: ["/bin/sh", "-ec"]
+            args:
+              - |
+                umask 077
+                QWEN=/usr/local/share/npm-global/bin/qwen
+                "$QWEN" mcp remove code-graph-rag >/dev/null 2>&1 || true
+                "$QWEN" mcp remove qwen-reranker >/dev/null 2>&1 || true
+                "$QWEN" mcp add --scope user --transport http code-graph-rag "http://openclaw-code-intel-mcp.openclaw.svc.cluster.local:8787/mcp" --header "Authorization: Bearer ${MCP_HTTP_AUTH_TOKEN}" --timeout 7200000
+                "$QWEN" mcp add --scope user --transport http qwen-reranker "http://openclaw-code-intel-mcp.openclaw.svc.cluster.local:8788/mcp" --timeout 7200000
+                chmod 0600 /home/openclaw/.qwen/settings.json
+            env:
+              HOME: *pvc
+              QWEN_HOME: "/home/openclaw/.qwen"
+              MCP_HTTP_AUTH_TOKEN:
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-code-intel-secrets
+                    key: MCP_HTTP_AUTH_TOKEN
             securityContext: *sc
     service:
       app:
@@ -300,6 +334,15 @@ spec:
                   namespaceSelector:
                     matchLabels:
                       kubernetes.io/metadata.name: continuwuity
+            - to:
+                - podSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: openclaw-code-intel
+              ports:
+                - port: 8787
+                  protocol: TCP
+                - port: 8788
+                  protocol: TCP
     serviceAccount:
       app: {}
     rbac:

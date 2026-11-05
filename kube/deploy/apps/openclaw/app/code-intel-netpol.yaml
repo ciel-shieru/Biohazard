@@ -1,0 +1,41 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/cilium.io/ciliumnetworkpolicy_v2.json
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: openclaw-code-intel
+  namespace: openclaw
+spec:
+  endpointSelector:
+    matchLabels:
+      "k8s:app.kubernetes.io/name": openclaw-code-intel
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: openclaw
+            "k8s:app.kubernetes.io/name": openclaw
+      toPorts:
+        - ports:
+            - port: "8787"
+              protocol: TCP
+            - port: "8788"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": llama-cpp
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": llmkube
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - toNodes:
+        - matchLabels:
+            kubernetes.io/hostname: sinon
+        - matchLabels:
+            kubernetes.io/hostname: silverhawk
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

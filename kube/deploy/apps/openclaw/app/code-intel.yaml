@@ -1,0 +1,197 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-code-intel
+  namespace: openclaw
+data:
+  opencode.json: |
+    {
+      "$schema": "https://opencode.ai/config.json",
+      "mcp": {
+        "code-graph-rag": {
+          "type": "remote",
+          "url": "http://openclaw-code-intel-mcp.openclaw.svc.cluster.local:8787/mcp",
+          "enabled": true,
+          "oauth": false,
+          "headers": {
+            "Authorization": "Bearer {env:CODE_INTEL_MCP_TOKEN}"
+          },
+          "timeout": 7200000
+        },
+        "qwen-reranker": {
+          "type": "remote",
+          "url": "http://openclaw-code-intel-mcp.openclaw.svc.cluster.local:8788/mcp",
+          "enabled": true,
+          "oauth": false,
+          "timeout": 7200000
+        }
+      }
+    }
+  cgrignore: |
+    # Platform-managed exclusions: environment files, local credentials,
+    # keys, deployment state, and cloud/Kubernetes authentication artifacts.
+    .env
+    .env.*
+    **/.env
+    **/.env.*
+    **/.ssh/
+    **/.aws/
+    **/.kube/
+    **/secrets/
+    **/secret/
+    **/*.pem
+    **/*.key
+    **/*.p12
+    **/*.pfx
+    **/*.jks
+    **/*.keystore
+    **/id_rsa*
+    **/id_ed25519*
+    **/id_ecdsa*
+    **/*.tfstate
+    **/*.tfstate.*
+    **/terraform.tfstate*
+    **/kubeconfig*
+    **/service-account*.json
+    **/*credentials*.json
+    **/*credential*.json
+    **/*token*.json
+  reranker_mcp.py: |
+    """MCP bridge to the configured local Qwen3 reranker endpoint."""
+    from __future__ import annotations
+
+    import json
+    import math
+    import os
+    import urllib.error
+    import urllib.request
+    from typing import Any
+
+    from mcp.server.fastmcp import FastMCP
+
+    _base_url = os.environ.get("LLM_API_BASE_URL", "").rstrip("/")
+    if not _base_url.startswith(("http://", "https://")):
+        raise RuntimeError("LLM_API_BASE_URL must be an HTTP(S) in-cluster API base URL")
+    RERANK_URL = f"{_base_url}/rerank"
+    MODEL = "qwen3-reranker-0.6b"
+    REQUEST_TIMEOUT_SECONDS = 120
+    MAX_RESPONSE_BYTES = 65536
+    MAX_CANDIDATES = 32
+    MAX_QUERY_CHARS = 4096
+    MAX_DOCUMENT_CHARS = 8192
+
+    mcp = FastMCP(
+        "qwen3-reranker",
+        instructions=(
+            "Rerank candidate code snippets using the local Qwen3 cross-encoder. "
+            "Supply candidates with id, text, and optional path. Use after "
+            "semantic/structural retrieval; scores are not proof of correctness."
+        ),
+        host="0.0.0.0",
+        port=8788,
+    )
+
+    @mcp.tool()
+    def rerank_code_candidates(
+        query: str,
+        candidates: list[dict[str, str]],
+        top_n: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Rank retrieved snippets; return identifiers and scores, not source."""
+        if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_CHARS:
+            raise ValueError("query must be non-empty and within the configured size limit")
+        if not isinstance(candidates, list) or not 1 <= len(candidates) <= MAX_CANDIDATES:
+            raise ValueError(f"candidates must contain between 1 and {MAX_CANDIDATES} items")
+        if isinstance(top_n, bool) or not isinstance(top_n, int) or not 1 <= top_n <= min(len(candidates), MAX_CANDIDATES):
+            raise ValueError("top_n must be between 1 and the candidate count")
+
+        documents: list[str] = []
+        identifiers: list[dict[str, str]] = []
+        for index, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                raise ValueError(f"candidate {index} must be an object")
+            document = candidate.get("text")
+            if not isinstance(document, str) or not document.strip() or len(document) > MAX_DOCUMENT_CHARS:
+                raise ValueError(f"candidate {index} text must be non-empty and at most {MAX_DOCUMENT_CHARS} characters")
+            candidate_id = candidate.get("id", str(index))
+            path = candidate.get("path", "")
+            if not isinstance(candidate_id, str) or len(candidate_id) > 512:
+                raise ValueError(f"candidate {index} id must be a string of at most 512 characters")
+            if not isinstance(path, str) or len(path) > 2048:
+                raise ValueError(f"candidate {index} path must be a string of at most 2048 characters")
+            documents.append(document)
+            identifiers.append({"id": candidate_id, "path": path})
+
+        payload = json.dumps(
+            {"model": MODEL, "query": query, "documents": documents, "top_n": top_n},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            RERANK_URL,
+            data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        # Ignore proxy environment variables; egress is restricted separately.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"local reranker returned HTTP {response.status}")
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise RuntimeError("local reranker response exceeded the configured size limit")
+                result = json.loads(raw)
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(f"local reranker returned HTTP {error.code}") from None
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise RuntimeError(f"local reranker request failed ({type(error).__name__})") from None
+
+        ranked = result.get("results") if isinstance(result, dict) else None
+        if not isinstance(ranked, list):
+            raise RuntimeError("local reranker returned an unexpected response shape")
+
+        output: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for item in ranked:
+            if not isinstance(item, dict):
+                continue
+            index = item.get("index")
+            score = item.get("relevance_score", item.get("score"))
+            if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(identifiers) or index in seen:
+                continue
+            if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+                continue
+            seen.add(index)
+            output.append({**identifiers[index], "index": index, "score": float(score)})
+            if len(output) >= top_n:
+                break
+        return output
+
+    if __name__ == "__main__":
+        mcp.run(transport="streamable-http")
+---
+# Keep the bearer token and local model-router URL in 1Password.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: openclaw-code-intel-secrets
+  namespace: openclaw
+spec:
+  refreshInterval: 1m
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: 1p
+  dataFrom:
+    - extract:
+        key: "OpenClaw Code Intelligence - ${CLUSTER_NAME}"
+  target:
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    name: openclaw-code-intel-secrets
+    template:
+      type: Opaque
+      data:
+        MCP_HTTP_AUTH_TOKEN: '{{ .MCP_HTTP_AUTH_TOKEN }}'
+        LLM_API_BASE_URL: '{{ .LLM_API_BASE_URL }}'

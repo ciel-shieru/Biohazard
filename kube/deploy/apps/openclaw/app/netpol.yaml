@@ -6,7 +6,9 @@ metadata:
   name: &app openclaw
   namespace: *app
 spec:
-  endpointSelector: {}
+  endpointSelector:
+    matchLabels:
+      "k8s:app.kubernetes.io/name": openclaw
   ingress:
     # same namespace
     - fromEndpoints:

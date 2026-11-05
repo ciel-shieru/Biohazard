@@ -1,0 +1,84 @@
+name: OpenClaw Code-Graph-RAG Image
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, feat/openclaw-code-intelligence]
+    paths:
+      - kube/deploy/apps/openclaw/code-intelligence/Dockerfile
+      - .github/workflows/openclaw-code-intelligence-image.yaml
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout Biohazard
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: true
+      - name: Checkout pinned Code-Graph-RAG source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: vitali87/code-graph-rag
+          ref: 22444ca64a6d0b246f00996f47ec376f32267264
+          path: cgr-source
+          persist-credentials: false
+      - name: Use the offline-vector-store Dockerfile
+        run: cp kube/deploy/apps/openclaw/code-intelligence/Dockerfile cgr-source/Dockerfile
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish immutable image
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./cgr-source
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/ciel-shieru/biohazard-code-graph-rag:sha-${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v2
+        with:
+          subject-name: ghcr.io/ciel-shieru/biohazard-code-graph-rag
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Pin the resulting image digest in the HelmRelease
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path("kube/deploy/apps/openclaw/app/code-intel-hr.yaml")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          positions = [i for i, line in enumerate(lines) if line.strip() == "repository: ghcr.io/ciel-shieru/biohazard-code-graph-rag"]
+          if len(positions) != 1:
+              raise SystemExit(f"expected one code-graph-rag image, found {len(positions)}")
+          i = positions[0]
+          if i + 1 >= len(lines) or lines[i + 1].strip() != "tag: build-pending":
+              raise SystemExit("code-graph-rag image is not in the expected build-pending state")
+          indent = len(lines[i + 1]) - len(lines[i + 1].lstrip())
+          lines[i + 1] = " " * indent + f"tag: sha-{os.environ['GITHUB_SHA']}@{os.environ['IMAGE_DIGEST']}"
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add kube/deploy/apps/openclaw/app/code-intel-hr.yaml
+          git commit -m "chore(openclaw/code-graph-rag): pin image digest"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

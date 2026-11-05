@@ -1,0 +1,241 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s/helm-charts/app-template-4.6.2/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: &app openclaw-code-intel
+  namespace: openclaw
+spec:
+  interval: 5m
+  chartRef:
+    kind: OCIRepository
+    name: app-template
+    namespace: openclaw
+  values:
+    controllers:
+      app:
+        type: deployment
+        replicas: 1
+        pod:
+          labels:
+            app.kubernetes.io/name: *app
+            dns.home.arpa/l7: "true"
+        containers:
+          indexer:
+            image: &img
+              repository: ghcr.io/ciel-shieru/biohazard-code-graph-rag
+              tag: build-pending
+            args: ["watch", "--repo-path", "/workspace", "--no-start-stack"]
+            workingDir: /var/lib/cgr
+            env: &cgr-env
+              TZ: ${CONFIG_TZ:=Asia/Singapore}
+              HOME: /var/lib/cgr
+              TARGET_REPO_PATH: /workspace
+              CGR_HOME: /var/lib/cgr
+              GRAPH_BACKEND: sqlite
+              CGR_VECTOR_STORE_BACKEND: sqlite
+              CGR_EMBEDDING_PROVIDER: openai
+              OPENAI_EMBEDDING_BASE_URL:
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-code-intel-secrets
+                    key: LLM_API_BASE_URL
+              OPENAI_EMBEDDING_MODEL: qwen3-embedding-0.6b
+              OPENAI_EMBEDDING_API_KEY: local
+              SQLITE_VECTOR_DIM: "1024"
+              EMBEDDING_MAX_LENGTH: "4096"
+              ORCHESTRATOR_PROVIDER: openai
+              ORCHESTRATOR_MODEL: qwen3.6-35b-a3b
+              ORCHESTRATOR_ENDPOINT:
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-code-intel-secrets
+                    key: LLM_API_BASE_URL
+              ORCHESTRATOR_API_KEY: local
+              CYPHER_PROVIDER: openai
+              CYPHER_MODEL: qwen3.6-35b-a3b
+              CYPHER_ENDPOINT:
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-code-intel-secrets
+                    key: LLM_API_BASE_URL
+              CYPHER_API_KEY: local
+              CGR_CAPTURE: io
+              CGR_TRUST_PROJECT_INSTRUCTIONS: "false"
+              CGR_ALLOW_SENSITIVE_READS: "false"
+              CGR_ALLOW_SENSITIVE_WRITES: "false"
+              PYTHONUNBUFFERED: "1"
+              PYTHONDONTWRITEBYTECODE: "1"
+              LOGURU_LEVEL: INFO
+            securityContext:
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+            resources:
+              requests:
+                cpu: 100m
+                memory: 1Gi
+              limits:
+                cpu: "2"
+                memory: 4Gi
+          graph:
+            image: *img
+            args: ["mcp-server", "--transport", "http", "--host", "0.0.0.0", "--port", "8787", "--read-only"]
+            workingDir: /var/lib/cgr
+            env:
+              <<: *cgr-env
+              MCP_READ_ONLY: "true"
+              MCP_HTTP_AUTH_TOKEN:
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-code-intel-secrets
+                    key: MCP_HTTP_AUTH_TOKEN
+            securityContext:
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+            resources:
+              requests:
+                cpu: 50m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 1Gi
+          reranker:
+            image: *img
+            command: ["/app/.venv/bin/python"]
+            args: ["/app/reranker_mcp.py"]
+            workingDir: /app
+            env:
+              PYTHONUNBUFFERED: "1"
+              PYTHONDONTWRITEBYTECODE: "1"
+              LLM_API_BASE_URL:
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-code-intel-secrets
+                    key: LLM_API_BASE_URL
+            securityContext:
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+            resources:
+              requests:
+                cpu: 10m
+                memory: 128Mi
+              limits:
+                cpu: 250m
+                memory: 256Mi
+    service:
+      mcp:
+        controller: app
+        ports:
+          graph:
+            port: 8787
+            targetPort: 8787
+            protocol: HTTP
+            appProtocol: http
+          reranker:
+            port: 8788
+            targetPort: 8788
+            protocol: HTTP
+            appProtocol: http
+    persistence:
+      source:
+        existingClaim: openclaw-data
+        advancedMounts:
+          app:
+            indexer:
+              - subPath: qwen-code-workspace
+                path: /workspace
+                readOnly: true
+            graph:
+              - subPath: qwen-code-workspace
+                path: /workspace
+                readOnly: true
+      state:
+        existingClaim: openclaw-code-intel
+        advancedMounts:
+          app:
+            indexer:
+              - path: /var/lib/cgr
+            graph:
+              - path: /var/lib/cgr
+      config:
+        type: configMap
+        name: openclaw-code-intel
+        defaultMode: 0444
+        advancedMounts:
+          app:
+            indexer:
+              - subPath: cgrignore
+                path: /workspace/.cgrignore
+                readOnly: true
+            graph:
+              - subPath: cgrignore
+                path: /workspace/.cgrignore
+                readOnly: true
+            reranker:
+              - subPath: reranker_mcp.py
+                path: /app/reranker_mcp.py
+                readOnly: true
+      tmp:
+        type: emptyDir
+        medium: Memory
+        globalMounts:
+          - subPath: tmp
+            path: /tmp
+    defaultPodOptions:
+      automountServiceAccountToken: false
+      runtimeClassName: gvisor
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              namespaces:
+                - openclaw
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: openclaw
+    networkpolicies:
+      app:
+        controller: app
+        policyTypes: [Ingress, Egress]
+        rules:
+          ingress:
+            - from:
+                - podSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: openclaw
+              ports:
+                - port: 8787
+                  protocol: TCP
+                - port: 8788
+                  protocol: TCP
+          egress:
+            - to:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: kube-system
+                  podSelector:
+                    matchLabels:
+                      k8s-app: kube-dns
+              ports:
+                - port: 53
+                  protocol: UDP
+                - port: 53
+                  protocol: TCP

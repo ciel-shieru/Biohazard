@@ -15,3 +15,20 @@ spec:
   resources:
     requests:
       storage: "50Gi"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "openclaw-code-intel"
+  namespace: &app "openclaw"
+  annotations:
+    description: "Regenerable Code-Graph-RAG SQLite graph and vector index."
+  labels:
+    app.kubernetes.io/name: *app
+    kustomize.toolkit.fluxcd.io/prune: "Disabled"
+spec:
+  storageClassName: "block-2"
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: "20Gi"
