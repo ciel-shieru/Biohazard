@@ -74,37 +74,21 @@ spec:
               type: RuntimeDefault
           containers:
             - name: patch-inferenceservice
-              image: curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
+              # Reuse the digest-pinned kubectl image already used in this repository.
+              image: registry.k8s.io/kubectl:v1.37.2@sha256:fe049faa65ae483ac200009a949a68fa4c9985daea12c9cb1195c9c7965301fc
               imagePullPolicy: IfNotPresent
               command:
                 - /bin/sh
                 - -ec
               args:
                 - |
-                  token_path=/var/run/secrets/kubernetes.io/serviceaccount/token
-                  ca_path=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                  # Use the UTC date as an idempotent daily marker. At 01:00
+                  # Singapore time it is the preceding UTC calendar date.
                   restart_day="$(date -u +%Y-%m-%d)"
                   patch="$(printf '{"spec":{"podAnnotations":{"ops.home.arpa/daily-restart":"%s"}}}' "$restart_day")"
-
-                  curl \
-                    --proto '=https' \
-                    --tlsv1.2 \
-                    --cacert "$ca_path" \
-                    --header "Authorization: Bearer $(cat "$token_path")" \
-                    --header "Content-Type: application/merge-patch+json" \
-                    --request PATCH \
-                    --data-binary "$patch" \
-                    --connect-timeout 5 \
-                    --max-time 30 \
-                    --retry 2 \
-                    --retry-connrefused \
-                    --retry-delay 2 \
-                    --fail \
-                    --silent \
-                    --show-error \
-                    --output /dev/null \
-                    --write-out 'InferenceService patch returned HTTP %{http_code}\n' \
-                    "https://kubernetes.default.svc/apis/inference.llmkube.dev/v1alpha1/namespaces/llmkube/inferenceservices/qwen3.6-35b-a3b"
+                  kubectl --namespace llmkube patch inferenceservice qwen3.6-35b-a3b \
+                    --type merge \
+                    --patch "$patch"
               resources:
                 requests:
                   cpu: 10m
