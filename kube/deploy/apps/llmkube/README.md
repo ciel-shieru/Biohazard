@@ -168,3 +168,20 @@ The router remains an internal ClusterIP service; no external route or
 authentication policy is created here. Client Pods must be explicitly opted in
 with the label `ai.internal/llmkube=allow`; without that label Cilium denies
 access to the router API.
+
+## Scheduled Qwen restart
+
+The llama.cpp `qwen3.6-35b-a3b` InferenceService receives a restart request every
+day at **01:00 Asia/Singapore**. The `qwen3.6-35b-a3b-restart.yaml` CronJob
+patches a date stamp into `spec.podAnnotations`, which changes the generated
+pod template. Its ServiceAccount can patch only this named InferenceService;
+the job image is digest-pinned, runs non-root with a read-only root filesystem,
+and is allowed egress only to the Kubernetes API server.
+
+LLMKube's native llama.cpp idle detector checks `/slots` and applies the
+pod-template rollout only after every slot reports that it is no longer
+processing. The `idleTimeoutSeconds` value is intentionally set to
+2,147,483,647 seconds (about 68 years): the operator's 5-minute default would
+otherwise eventually force the restart even if generation were still active.
+The 01:00 schedule is therefore the trigger time; the actual restart can happen
+later if the model is still busy or the idle check cannot confirm idleness.

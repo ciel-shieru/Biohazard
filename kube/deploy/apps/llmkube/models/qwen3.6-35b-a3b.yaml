@@ -184,3 +184,10 @@ spec:
     seccompProfile:
       type: RuntimeDefault
   startupTimeout: 45m
+  # The daily CronJob changes podAnnotations to request this Deployment rollout.
+  # LLMKube checks llama.cpp /slots before rolling. The 5-minute default timeout
+  # would force a busy restart, so use the largest signed 32-bit seconds value
+  # (~68 years) to wait for idle instead.
+  rolloutPolicy:
+    waitForIdle: true
+    idleTimeoutSeconds: 2147483647
