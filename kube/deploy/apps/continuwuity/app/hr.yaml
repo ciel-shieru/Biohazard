@@ -45,6 +45,15 @@ spec:
               CONDUWUIT_DATABASE_PATH: &data /data
               CONDUWUIT_DATABASE_BACKUP_PATH: &backup /backups
               CONDUWUIT_DATABASE_BACKUPS_TO_KEEP: 2
+              # RocksDB on 3x-replicated Ceph RBD (Intel S3500 SATA SSDs over 1GbE).
+              # Budgets use MiB internally; neither is a hard limit on process RSS.
+              # Leave headroom under the 1Gi container limit for Rust and other caches.
+              CONTINUWUITY_DB_WRITE_BUFFER_CAPACITY_MB: "300.0"
+              CONTINUWUITY_DB_CACHE_CAPACITY_MB: "192.0"
+              # Limit simultaneous flush/compaction work on shared network storage.
+              CONTINUWUITY_ROCKSDB_PARALLELISM_THREADS: "4"
+              # Keep RocksDB's default ZSTD compression, WAL, checksum, and direct I/O
+              # settings: the database is on an RBD block device, not CephFS.
               CONDUWUIT_NEW_USER_DISPLAYNAME_SUFFIX: ""
               CONDUWUIT_WELL_KNOWN__CLIENT: "https://${APP_DNS_CONTINUWUITY}"
               CONDUWUIT_WELL_KNOWN__SERVER: "${APP_DNS_CONTINUWUITY_SERVER}:443"
