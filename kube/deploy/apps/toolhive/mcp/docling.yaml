@@ -22,7 +22,6 @@ spec:
     metadata:
       labels:
         docling.internal/role: mcp
-        ai.internal/llmkube: allow
     spec:
       runtimeClassName: gvisor
       automountServiceAccountToken: false
@@ -36,9 +35,15 @@ spec:
           type: RuntimeDefault
       containers:
         - name: mcp
-          # Registers a page-vision tool into upstream MCP's in-process tool
-          # registry. Only this pod, not Docling Serve, calls auto-vision.
-          command: [python, -B, /opt/docling-mcp/entrypoint.py]
+          # Stock upstream CLI; no custom Python extension.
+          command: [docling-mcp-server]
+          args:
+            - --transport
+            - streamable-http
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
           env:
             - name: TZ
               value: Asia/Singapore
@@ -70,11 +75,11 @@ spec:
               value: auto
             - name: DOCLING_MCP_DO_TABLE_STRUCTURE
               value: "true"
-            # Docling Serve has zero outbound network access. It cannot
-            # call auto-vision from within the inference Pod. Retain original
-            # page images for a distinct MCP/client-side vision step instead.
+            # Native Docling MCP sends these options to Docling Serve.
             - name: DOCLING_MCP_DO_PICTURE_DESCRIPTION
-              value: "false"
+              value: "true"
+            - name: DOCLING_MCP_PICTURE_DESCRIPTION_PRESET
+              value: auto-vision
             - name: DOCLING_MCP_CACHE_MAX_DOCUMENTS
               value: "2"
           securityContext:
@@ -98,14 +103,7 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: vision-entrypoint
-              mountPath: /opt/docling-mcp
-              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi
-        - name: vision-entrypoint
-          configMap:
-            name: docling-mcp-vision
-            defaultMode: 0444

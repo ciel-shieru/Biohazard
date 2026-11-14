@@ -1,155 +1,100 @@
 # Docling via ToolHive and LLMKube
 
-## Architecture
+## Architecture and native VLM integration
 
-- `MCPServer/mcp/docling` is a non-root gVisor-isolated, streamable-HTTP
-  Docling MCP endpoint in *remote* mode. The existing `MCPGroup/mcp` and
-  `VirtualMCPServer/mcp` discover it; no new ingress route is added.
-  The ConfigMap-mounted entrypoint registers an additional MCP-side vision
-  tool in the upstream in-process document cache.
-- `InferenceService/llmkube/docling-serve` runs the official **CUDA 12.8
-  Docling Serve 1.38.2** image on **sinon**, requesting **one T4**. Its
-  image already contains Docling's specialized PDF-layout, TableFormer,
-  and OCR model assets. These stages run in Docling, not in an OpenAI
-  chat-completions server. LLMKube operates the overall inference service.
-- LLMKube's generic-runtime API requires `modelRef` even when models
-  are image-bundled. `Model/docling-bundled-models` uses the pre-existing
-  Bound `llmkube-models` PVC as an identity/reference, **not** as the source
-  of its executable weights. `skipModelInit: true` avoids model staging;
-  the real layout/table/OCR weights are pinned by the serving OCI image.
-- The InferenceService **does not make ANY outbound network connections**:
-  `DOCLING_SERVE_ENABLE_REMOTE_SERVICES=false`,
-  `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` disable remote
-  calls/downloads. A Docling-specific Cilium `egressDeny` selects
-  `toEntities: [all]`, overriding even the cluster's shared DNS-egress
-  allow policy (Cilium deny precedence). No `ai.internal/llmkube` label
-  is placed on this inference pod.
-- Cilium permits *incoming* ToolHive-MCP-to-Serve TCP/5001 requests.
-  A successful response to an established inbound request is not an
-  independently initiated egress connection.
-- Docling's built-in picture-description preset cannot call a separate
-  VLM with a **zero-egress backend**. Consequently
-  `DOCLING_MCP_DO_PICTURE_DESCRIPTION=false`, and the unmodified page
-  images remain in the MCP output. A separate client/agent that needs
-  descriptions may send selected images to the existing llmkube
-  `auto-vision` model **without an API key**; that outbound call must
-  originate from the client/agent, **not** the inference pod.
+- `MCPServer/mcp/docling` runs the **stock upstream** `docling-mcp-server`
+  in remote conversion mode, without custom Python code or extra tools.
+  The existing `MCPGroup/mcp` / `VirtualMCPServer/mcp` discover it.
+- `InferenceService/llmkube/docling-serve` runs Docling Serve v1.38.2
+  with local layout, TableFormer, OCR and PDF rendering on `sinon` using
+  one time-sliced Tesla T4 resource. The official CUDA 12.8 image includes
+  specialized model weights; `skipModelInit: true` avoids staging.
+  The generic-runtime `Model/docling-bundled-models` provides the required
+  ModelRef identity using the existing Bound `llmkube-models` PVC.
+- Docling MCP uses `DOCLING_MCP_DO_PICTURE_DESCRIPTION=true` and
+  `DOCLING_MCP_PICTURE_DESCRIPTION_PRESET=auto-vision`, sending both
+  options through its supported remote conversion API.
+- Docling Serve's administrator-defined `auto-vision` picture-description
+  preset uses the built-in `api` VLM engine, OpenAI-compatible
+  `http://llmkube.llmkube.svc.cluster.local/v1/chat/completions`,
+  `model: auto-vision`, and **no API key or Authorization header**.
+  `DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true` enables this functionality.
+  `DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG=false` and
+  allowlists for the preset and API engine disallow client-supplied endpoints.
 
-The CUDA 12.8 serving image is pinned to its upstream GHCR v1.38.2
-manifest digest; the CPU-only MCP image uses its independently published
-Quay.io v1.38.2 digest. The CPU MCP image bundles Docling MCP v3.3.0, despite the separately
-released `docling-mcp` v3.5.0; this avoids unpinned runtime pip installs.
+## Network and security boundaries
 
-## Visual fidelity and limitations
+- ToolHive MCP may egress to Docling Serve on TCP/5001 and to kube-dns
+  under the existing clusterwide DNS policy. It has **no** direct router
+  egress and no world/host egress.
+- Docling Serve may egress to the llmkube router pod on TCP/8080 and to
+  kube-dns under the clusterwide DNS policy. It carries the
+  `ai.internal/llmkube: allow` label required by the router ingress policy,
+  but does **not** receive general Internet access.
+- The dedicated Cilium policy permits MCP-to-Serve inbound conversion
+  on TCP/5001, subject to the existing shared LLMKube policy.
+  A deny-all egress rule cannot coexist with permitted router egress,
+  because Cilium deny policies take precedence over allows.
+- The cluster's Cilium allow policies are **additive**: audit the effective
+  Cilium endpoint policy to confirm no unexpected clusterwide allows
+  expand either workload's destinations. `HF_HUB_OFFLINE=1` and
+  `TRANSFORMERS_OFFLINE=1` prevent opportunistic model downloads.
+- MCP is nonroot, read-only root filesystem, seccomp, drop-all
+  capabilities and gVisor isolated. Docling Serve uses the same
+  least-privilege controls but not gVisor due to GPU access.
 
-`DOCLING_MCP_KEEP_IMAGES=true`, scale `2.0`, and Markdown image
-`embedded` preserve page/picture raster data *in the export*, alongside
-layout structure, OCR and tables. Embedded
-base64 images may be very large: avoid blindly putting complete long-PDF
-exports into an LLM context. Use Docling JSON plus targeted page images or
-the original PDF where exact pixel-level fidelity is required.
+## Visual information preservation
 
-No extraction is guaranteed to preserve **all** visual information or to
-transcribe every graph/diagram correctly. Picture descriptions are
-**not generated by Docling Serve** in this configuration. The MCP-side
-`describe_docling_page_with_auto_vision` tool generates on-demand
-whole-page descriptions. It does not modify the DoclingDocument or
-automatically describe all pages. Do not enable the built-in picture
-description preset because it requires egress from Docling Serve.
-Docling's optional formula enrichment and chart-to-data extraction are
-**not automatically enabled** by these MCP flags; clients requiring
-them should use validated offline Docling Serve conversion options.
+`DOCLING_MCP_KEEP_IMAGES=true`, `DOCLING_MCP_IMAGES_SCALE=2.0` and
+`DOCLING_MCP_IMAGE_EXPORT_MODE=embedded` retain page and picture images,
+alongside structured layout, OCR, tables and native picture descriptions
+in Docling conversion output. Embedded images can be large: use
+targeted JSON extraction or selected page bitmaps for long PDFs.
 
-MCP tools need a document they can access by their supported URI. Chat
-attachments are not automatically mounted into the MCP pod. In particular,
-the network policy deliberately prevents the backend from downloading
-arbitrary public URLs: first make the input available through a trusted
-in-cluster upload/URL workflow and allow only its specific network peer.
-Do not bypass the SSRF and exfiltration restrictions with wildcard egress.
+Native picture description enriches **detected pictures**, not every
+pixel of every page. The stock Docling MCP tool `get_page_thumbnail`
+can provide a whole cached page for separate agent inspection; there
+is no custom whole-page vision tool. The original PDF remains the
+authoritative reference when pixel-level fidelity is required.
+Formula enrichment and chart-to-data extraction are separate optional
+features; they are not automatically enabled by these MCP flags.
 
-## Single-T4 sharing and memory budget
+Chat attachments are not automatically mounted in the MCP pod. It needs
+a trusted in-cluster file/URL workflow; arbitrary Internet URI retrieval
+is intentionally blocked. Never widen egress to world merely for
+convenient document fetching.
 
-The existing NVIDIA GPU Operator
-(`kube/deploy/core/hardware/nvidia/app/time-slicing.yaml`) sets
-`sharing.timeSlicing.resources[0].replicas: 8` for `nvidia.com/gpu`.
-Consequently, all three independent `nvidia.com/gpu: 1` pods can
-schedule onto **the same physical Tesla T4** without a ModelPool.
-This is time slicing, not MIG, partitioning or VRAM isolation. Every
-replica sees the full card, can allocate all its memory, and contends
-for compute and memory bandwidth. Eight advertised resources do not
-mean eight independent 16 GiB memory allocations.
+## Shared Tesla T4
 
-The embedding and reranker currently use **2,595 MiB of 16,384 MiB**.
-That leaves approximately **13,789 MiB** available before other runtime,
-CUDA, model-loading and fragmentation overhead. Measure Docling peak
-VRAM (including page batching, TableFormer and OCR execution) before
-assuming it can coexist under bursty workloads; keep conservative
-one-worker, one-page batch defaults initially. If necessary, reduce
-batching further or move stages to CPU without making unrelated
-embedding/reranker service changes.
+The NVIDIA GPU Operator advertises eight time-sliced `nvidia.com/gpu`
+resources on the single physical T4. Docling, embedding and reranking
+can each request one such resource. There is **no VRAM isolation**.
+Embedding and reranker currently consume approximately 2,595 MiB of
+16,384 MiB, leaving about 13,789 MiB before other allocations. Use
+one Docling worker and one-page batching, monitor worst-case VRAM
+under concurrent jobs, and do not assume 8x physical memory exists.
+The embedding/reranking Model GPU counts have been aligned to one
+for the current hardware inventory.
 
-The former two-GPU `Model.spec.hardware.gpu.count` declarations of
-the embedding/reranker are corrected to one for the updated node
-inventory. Their existing InferenceService GPU request remains one.
-There is no requirement to move either to CPU merely for scheduling.
+## Validation before merging
 
-The Docling runtime is **not** in gVisor: GPU passthrough is required.
-The MCP pod uses gVisor and restricted Pod Security controls. Both drop
-all capabilities and run non-root with a read-only root filesystem.
+1. Validate the Flux Kustomizations and CRD schemas for LLMKube,
+   ToolHive, Cilium and the new Docling manifests.
+2. Confirm the **actual registry image digests** are valid, and the
+   expected CUDA and CPU Docling image entrypoints exist. Static review
+   cannot replace a runtime image-pull test.
+3. Confirm `/ready`, `/health`, MCP tool discovery and startup
+   preset validation. Assert the `auto-vision` preset is accepted with
+   `default_repo_id`, `response_format=plaintext`, `engine_type=api`.
+4. Convert a trusted multi-page PDF containing OCR scans, tables,
+   charts, diagrams and small labels. Inspect Docling JSON,
+   embedded page images and native descriptions. Verify calls to
+   `auto-vision` originate from **Docling Serve** without API keys.
+5. Observe Hubble: MCP → Serve TCP/5001 and Serve → router TCP/8080
+   should pass. MCP → router, world/host egress from either workload
+   and all other unauthorized flows should be denied. Verify shared
+   DNS policy remains limited to kube-dns.
+6. Test malicious PDFs, blocked URL input, failed VLM backend,
+   timeouts, batch limits, RAM/VRAM pressure and image fidelity.
 
-## Validation
-
-1. `flux build ks toolhive-mcp --path ./kube/deploy/apps/toolhive/mcp`
-   and `flux build ks llmkube-models --path ./kube/deploy/apps/llmkube/models`;
-   alternatively validate with `kubectl apply --dry-run=server -f` for
-   each new manifest after Flux substitution.
-2. `kubectl -n llmkube get model docling-bundled-models`,
-   `kubectl -n llmkube get inferenceservice docling-serve`, and
-   `kubectl -n mcp get mcpserver docling`; check Cilium policy status.
-3. Verify `docling-serve` serves `GET /ready` and the MCP proxy lists
-   its tools via the existing VirtualMCPServer. Confirm CUDA device 0
-   maps to the **single Tesla T4**.
-4. Convert a trusted, multi-page PDF with selectable text, a scanned
-   page, a multi-row table, and a chart. Compare Docling JSON text/table
-   positions with the source. Confirm image content is returned, not
-   `<!-- image -->` placeholders. No backend-generated descriptions should
-   appear. Call `describe_docling_page_with_auto_vision` from the MCP
-   client with a cached document key. Verify the MCP pod calls the
-   `auto-vision` router and the InferenceService initiates no connections.
-5. From the Docling inference pod's Cilium endpoint, use Hubble and a
-   controlled probe to assert **DENIED** for kube-dns (UDP/TCP 53),
-   llmkube-router (TCP/8080), another pod, host/node IPs, an Internet IP,
-   and cloud instance metadata (169.254.169.254). Confirm the `egressDeny`
-   policy is attached and enforced, including over shared/global allow
-   rules. The runtime should not attempt these connections during normal
-   conversion.
-6. Test malformed, oversized, password-protected and highly compressed
-   PDFs, blocked external URI inputs, 7,200-second timeout behavior and
-   memory/VRAM usage. Confirm only return traffic for inbound requests
-   is permitted, and no independent outbound connections succeed.
-7. Confirm actual MCP/Docling image UID with restricted Pod Security and
-   gVisor constraints. An in-cluster smoke test is required before production.
-
-## MCP-side vision call isolation
-
-The additional `describe_docling_page_with_auto_vision` MCP tool
-loads the original image from `docling_mcp.shared.local_document_cache`
-using the existing `document_key`. It copies (does not mutate) the page
-bitmap, scales a copy to at most 2048 pixels by default (configurable up
-to 4096), and calls the fixed internal llmkube
-`/v1/chat/completions` endpoint with `model: auto-vision`.
-No API key or Authorization header is set. HTTP proxies and redirects
-are disabled; a 16 MiB image size cap and 2 MiB response size cap apply.
-
-The ToolHive MCP pod has `ai.internal/llmkube: allow` and may
-egress to Docling Serve TCP/5001, llmkube router TCP/8080 and the
-cluster's existing DNS service. The Docling InferenceService has an
-explicit Cilium `egressDeny` to all destinations, overriding shared
-cluster allowances, including DNS. Replies to incoming conversion
-requests are statefully permitted.
-
-The extra MCP tool enriches **whole pages on demand**, not each
-picture automatically, so agents must call it explicitly after
-conversion and combine descriptions with retained images and structure.
-Its compatibility with the exact container digest still requires
-a running smoke test before merging this draft PR.
+This PR remains **draft** until in-cluster verification succeeds.

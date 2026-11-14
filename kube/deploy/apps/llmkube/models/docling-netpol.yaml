@@ -20,11 +20,14 @@ spec:
         - ports:
             - port: "5001"
               protocol: TCP
-  # The cluster's default DNS-egress CiliumClusterwideNetworkPolicy and
-  # any future app/global allow rules are additive. An empty egress allowlist
-  # alone is NOT a sufficient zero-egress guarantee. Deny takes precedence
-  # over every allow policy, including DNS, in-cluster, node and world peers.
-  egress: []
-  egressDeny:
-    - toEntities:
-        - all
+  # Only permit Docling's admin-defined VLM API destination. The existing
+  # clusterwide rule handles kube-dns; there is no world or host egress.
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: llmkube
+            inference.llmkube.dev/model-router: llmkube-router
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
