@@ -20,3 +20,12 @@ spec:
         - ports:
             - port: "5001"
               protocol: TCP
+    # MCP-side VLM call only. InferenceService egress remains deny-all.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: llmkube
+            inference.llmkube.dev/model-router: llmkube-router
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
