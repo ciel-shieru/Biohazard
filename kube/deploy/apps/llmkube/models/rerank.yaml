@@ -15,7 +15,7 @@ spec:
     gpu:
       enabled: true
       vendor: nvidia
-      count: 2
+      count: 1
       layers: 99
   prefetch: true
   prefetchNodeSelector:
