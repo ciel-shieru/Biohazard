@@ -1,0 +1,33 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/cilium.io/ciliumnetworkpolicy_v2.json
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: docling-serve
+  namespace: llmkube
+spec:
+  endpointSelector:
+    matchLabels:
+      inference.llmkube.dev/service: docling-serve
+  ingress:
+    # The ToolHive MCP workload is the only Docling-specific HTTP client.
+    # LLMKube's common policy also permits its existing trusted operator/router.
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: mcp
+            docling.internal/role: mcp
+      toPorts:
+        - ports:
+            - port: "5001"
+              protocol: TCP
+  egress:
+    # The only permitted picture-caption VLM is the local LLMKube model
+    # router's auto-vision route; no API key, Internet, or metadata endpoint.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: llmkube
+            inference.llmkube.dev/model-router: llmkube-router
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

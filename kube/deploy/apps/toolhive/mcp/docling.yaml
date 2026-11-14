@@ -1,0 +1,101 @@
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/toolhive.stacklok.dev/mcpserver_v1alpha1.json
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: docling
+  namespace: mcp
+spec:
+  # Official Docling Serve image includes docling-mcp-server (3.3.0 in v1.38.2).
+  # This instance only proxies to the GPU-backed LLMKube conversion service.
+  image: ghcr.io/docling-project/docling-serve-cpu:v1.38.2@sha256:7a480a1604fa3b42efeddc7db9527690d9f9bc903226136013e2bfe6b1a4dfb0
+  transport: streamable-http
+  mcpPort: 8000
+  groupRef:
+    name: mcp
+  resourceOverrides:
+    proxyDeployment:
+      podTemplateMetadataOverrides:
+        labels:
+          ingress.internal/toolhive: allow
+  podTemplateSpec:
+    metadata:
+      labels:
+        docling.internal/role: mcp
+    spec:
+      runtimeClassName: gvisor
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: &uid 1001
+        runAsGroup: *uid
+        fsGroup: *uid
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp
+          command: [docling-mcp-server]
+          args:
+            - --transport
+            - streamable-http
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          env:
+            - name: TZ
+              value: Asia/Singapore
+            - name: DOCLING_MCP_CONVERSION_MODE
+              value: remote
+            - name: DOCLING_MCP_SERVICE_URL
+              value: http://docling-serve.llmkube.svc.cluster.local:5001
+            - name: DOCLING_MCP_SERVICE_TIMEOUT
+              value: "7200"
+            - name: DOCLING_MCP_SERVICE_MAX_RETRIES
+              value: "1"
+            - name: DOCLING_MCP_FALLBACK_TO_LOCAL
+              value: "false"
+            - name: DOCLING_MCP_KEEP_IMAGES
+              value: "true"
+            - name: DOCLING_MCP_IMAGES_SCALE
+              value: "2.0"
+            - name: DOCLING_MCP_IMAGE_EXPORT_MODE
+              value: embedded
+            - name: DOCLING_MCP_DO_OCR
+              value: "true"
+            - name: DOCLING_MCP_OCR_ENGINE
+              value: auto
+            - name: DOCLING_MCP_DO_TABLE_STRUCTURE
+              value: "true"
+            - name: DOCLING_MCP_DO_PICTURE_DESCRIPTION
+              value: "true"
+            - name: DOCLING_MCP_PICTURE_DESCRIPTION_PRESET
+              value: auto-vision
+            - name: DOCLING_MCP_CACHE_MAX_DOCUMENTS
+              value: "2"
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: *uid
+            runAsGroup: *uid
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 25m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
