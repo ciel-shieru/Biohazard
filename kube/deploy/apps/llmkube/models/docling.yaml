@@ -1,8 +1,8 @@
 ---
 # Docling's layout, TableFormer and OCR engines are not standalone OpenAI-model
 # endpoints. Run the official image that bundles their pinned weights as one
-# LLMKube-managed generic inference workload; use LLMKube's router only for
-# remote VLM picture descriptions.
+# LLMKube-managed generic inference workload. The Pod has zero network
+# egress: all layout, TableFormer, OCR and PDF rendering run locally.
 apiVersion: inference.llmkube.dev/v1alpha1
 kind: Model
 metadata:
@@ -46,7 +46,6 @@ spec:
       effect: NoSchedule
   podLabels:
     docling.internal/role: serve
-    ai.internal/llmkube: allow
   endpoint:
     type: ClusterIP
     port: 5001
@@ -100,10 +99,10 @@ spec:
       value: "false"
     - name: DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG
       value: "false"
-    # This enables only the admin-defined in-cluster API backend; Cilium
-    # separately blocks external/metadata network access from this pod.
+    # No remote inference, no document URL fetching and no other outbound
+    # traffic: the Cilium egressDeny policy blocks every network peer.
     - name: DOCLING_SERVE_ENABLE_REMOTE_SERVICES
-      value: "true"
+      value: "false"
     - name: DOCLING_SERVE_CORS_ORIGINS
       value: '[]'
     - name: DOCLING_SERVE_MAX_FILE_SIZE
@@ -118,18 +117,11 @@ spec:
       value: "true"
     - name: DOCLING_SERVE_SCRATCH_PATH
       value: /tmp/docling
-    - name: DOCLING_SERVE_DEFAULT_PICTURE_DESCRIPTION_PRESET
-      value: auto-vision
-    - name: DOCLING_SERVE_ALLOWED_PICTURE_DESCRIPTION_PRESETS
-      value: auto-vision
-    - name: DOCLING_SERVE_ALLOWED_PICTURE_DESCRIPTION_ENGINES
-      value: api
-    # No Authorization header, OPENAI_API_KEY or other secret: the LLMKube
-    # router accepts in-cluster callers opted in by Cilium pod label.
-    - name: DOCLING_SERVE_CUSTOM_PICTURE_DESCRIPTION_PRESETS
-      value: >-
-        {"auto-vision":{"model_spec":{"name":"auto-vision","prompt":"Describe this visual precisely. Include all legible text, labels, values, axes, legends, layout relationships, chart data, diagram connections and fine details. Report uncertainty rather than inventing content."},"engine_options":{"engine_type":"api","url":"http://llmkube.llmkube.svc.cluster.local/v1/chat/completions","headers":{},"params":{"model":"auto-vision","max_tokens":2048,"temperature":0},"timeout":7200.0,"concurrency":1},"picture_area_threshold":0.0,"scale":2.0}}
+    # Model weights are baked into the pinned image. Fail locally if
+    # required artifacts are absent instead of attempting a download.
     - name: HF_HUB_OFFLINE
+      value: "1"
+    - name: TRANSFORMERS_OFFLINE
       value: "1"
   extraVolumes:
     - name: tmp

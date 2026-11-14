@@ -68,10 +68,11 @@ spec:
               value: auto
             - name: DOCLING_MCP_DO_TABLE_STRUCTURE
               value: "true"
+            # Docling Serve has zero outbound network access. It cannot
+            # call auto-vision from within the inference Pod. Retain original
+            # page images for a distinct MCP/client-side vision step instead.
             - name: DOCLING_MCP_DO_PICTURE_DESCRIPTION
-              value: "true"
-            - name: DOCLING_MCP_PICTURE_DESCRIPTION_PRESET
-              value: auto-vision
+              value: "false"
             - name: DOCLING_MCP_CACHE_MAX_DOCUMENTS
               value: "2"
           securityContext:

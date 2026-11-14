@@ -20,14 +20,11 @@ spec:
         - ports:
             - port: "5001"
               protocol: TCP
-  egress:
-    # The only permitted picture-caption VLM is the local LLMKube model
-    # router's auto-vision route; no API key, Internet, or metadata endpoint.
-    - toEndpoints:
-        - matchLabels:
-            io.kubernetes.pod.namespace: llmkube
-            inference.llmkube.dev/model-router: llmkube-router
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
+  # The cluster's default DNS-egress CiliumClusterwideNetworkPolicy and
+  # any future app/global allow rules are additive. An empty egress allowlist
+  # alone is NOT a sufficient zero-egress guarantee. Deny takes precedence
+  # over every allow policy, including DNS, in-cluster, node and world peers.
+  egress: []
+  egressDeny:
+    - toEntities:
+        - all
