@@ -9,13 +9,11 @@ metadata:
   name: docling-bundled-models
   namespace: llmkube
 spec:
-  # Generic InferenceServices require a ModelRef. This is a version-pinned
-  # upstream metadata identity, NOT the source of the runtime's weights:
-  # skipModelInit below intentionally uses the models baked into the immutable
-  # Docling Serve image. Do not enable prefetch/stageModel on this reference.
-  source: hf://docling-project/docling-models@2199320848bb9a8a519d22e4b528185a4f9a6f64
-  files:
-    - config.json
+  # Generic InferenceServices require a ModelRef. Model readiness is tied to
+  # the pre-existing, Bound llmkube-models PVC, rather than a fabricated Hub
+  # download: the true specialized model weights are embedded in the immutable
+  # runtime image and not staged by LLMKube (skipModelInit=true).
+  source: pvc://llmkube-models/docling-bundled-models
   format: custom
   hardware:
     accelerator: cuda

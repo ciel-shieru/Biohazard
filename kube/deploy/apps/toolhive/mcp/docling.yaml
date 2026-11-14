@@ -8,7 +8,7 @@ metadata:
 spec:
   # Official Docling Serve image includes docling-mcp-server (3.3.0 in v1.38.2).
   # This instance only proxies to the GPU-backed LLMKube conversion service.
-  image: ghcr.io/docling-project/docling-serve-cpu:v1.38.2@sha256:7a480a1604fa3b42efeddc7db9527690d9f9bc903226136013e2bfe6b1a4dfb0
+  image: quay.io/docling-project/docling-serve-cpu:v1.38.2@sha256:7a480a1604fa3b42efeddc7db9527690d9f9bc903226136013e2bfe6b1a4dfb0
   transport: streamable-http
   mcpPort: 8000
   groupRef:

@@ -11,10 +11,10 @@
   and OCR model assets. These stages run in Docling, not in an OpenAI
   chat-completions server. LLMKube operates the overall inference service.
 - LLMKube's generic-runtime API requires `modelRef` even when models
-  are image-bundled. `Model/docling-bundled-models` is a pinned source
-  metadata identity; `skipModelInit: true` ensures it does not download
-  or claim to load the unrelated HF `config.json`. The *executable*
-  layout/table/OCR weights are pinned by the serving OCI image digest.
+  are image-bundled. `Model/docling-bundled-models` uses the pre-existing
+  Bound `llmkube-models` PVC as an identity/reference, **not** as the source
+  of its executable weights. `skipModelInit: true` avoids model staging;
+  the real layout/table/OCR weights are pinned by the serving OCI image.
 - Docling's admin-controlled `auto-vision` picture-description preset
   calls `http://llmkube.llmkube.svc.cluster.local/v1/chat/completions`
   with `model: auto-vision` and **no API key or Authorization header**.
@@ -23,8 +23,9 @@
   TCP/8080. The source PDFs and derived images never need cloud APIs.
   The backend does not have general Internet egress.
 
-The images are pinned to upstream published v1.38.2 multiarch manifest
-digests. The CPU MCP image bundles Docling MCP v3.3.0, despite the separately
+The CUDA 12.8 serving image is pinned to its upstream GHCR v1.38.2
+manifest digest; the CPU-only MCP image uses its independently published
+Quay.io v1.38.2 digest. The CPU MCP image bundles Docling MCP v3.3.0, despite the separately
 released `docling-mcp` v3.5.0; this avoids unpinned runtime pip installs.
 
 ## Visual fidelity and limitations
@@ -50,20 +51,31 @@ arbitrary public URLs: first make the input available through a trusted
 in-cluster upload/URL workflow and allow only its specific network peer.
 Do not bypass the SSRF and exfiltration restrictions with wildcard egress.
 
-## Single-T4 scheduling blocker
+## Single-T4 sharing and memory budget
 
-**Review before merge:** existing
-`InferenceService/qwen3-embedding-0.6b` and
-`InferenceService/qwen3-reranker-0.6b` each request one NVIDIA GPU
-and are configured for continual replicas. The Docling conversion service
-also requests one; with just one T4, **only one of these three pods can
-hold an exclusive `nvidia.com/gpu` allocation**. This PR corrects the
-stale two-GPU Model hardware declarations to one, but that does not make
-all three services schedulable together. Decide how to isolate or
-CPU-host embedding/reranking, or introduce a tested GPU timeslicing /
-lifecycle policy, before accepting the PR. A standard LLMKube ModelPool
-cannot transparently wake Docling via its distinct `/v1/convert` route;
-do not add it without verifying actual request-driven activation.
+The existing NVIDIA GPU Operator
+(`kube/deploy/core/hardware/nvidia/app/time-slicing.yaml`) sets
+`sharing.timeSlicing.resources[0].replicas: 8` for `nvidia.com/gpu`.
+Consequently, all three independent `nvidia.com/gpu: 1` pods can
+schedule onto **the same physical Tesla T4** without a ModelPool.
+This is time slicing, not MIG, partitioning or VRAM isolation. Every
+replica sees the full card, can allocate all its memory, and contends
+for compute and memory bandwidth. Eight advertised resources do not
+mean eight independent 16 GiB memory allocations.
+
+The embedding and reranker currently use **2,595 MiB of 16,384 MiB**.
+That leaves approximately **13,789 MiB** available before other runtime,
+CUDA, model-loading and fragmentation overhead. Measure Docling peak
+VRAM (including page batching, TableFormer and OCR execution) before
+assuming it can coexist under bursty workloads; keep conservative
+one-worker, one-page batch defaults initially. If necessary, reduce
+batching further or move stages to CPU without making unrelated
+embedding/reranker service changes.
+
+The former two-GPU `Model.spec.hardware.gpu.count` declarations of
+the embedding/reranker are corrected to one for the updated node
+inventory. Their existing InferenceService GPU request remains one.
+There is no requirement to move either to CPU merely for scheduling.
 
 The Docling runtime is **not** in gVisor: GPU passthrough is required.
 The MCP pod uses gVisor and restricted Pod Security controls. Both drop
