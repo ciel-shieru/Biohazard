@@ -142,10 +142,9 @@ spec:
   nodeSelector:
     kubernetes.io/hostname: sinon
   gpu: 1
-  swapPolicy: reclaim
-  default: qwen3.8-27b-radiance
+  swapPolicy: sticky
+  default: qwen3.8-27b-pro-radiance
   swapBudget: 900s
-  reclaimAfter: 15m
   members:
     - inferenceServiceRef:
         name: qwen3.8-27b-radiance
@@ -153,6 +152,10 @@ spec:
         name: qwen3.8-27b-pro-radiance
     - inferenceServiceRef:
         name: qwen3.8-27b-context-radiance
+    - inferenceServiceRef:
+        name: qwen3.8-flash-next-radiance
+    - inferenceServiceRef:
+        name: qwen3.8-flash-next-gyro-m-strata
     - inferenceServiceRef:
         name: muse-glimmer-radiance
     # - inferenceServiceRef:
@@ -171,19 +174,27 @@ spec:
   defaultRoute: qwen3-8-27b-radiance
   backends:
     - name: qwen3-8-27b-radiance
-      displayName: qwen3.8-27b-radiance
+      displayName: qwen3.8-27b
       inferenceServiceRef:
         name: qwen3.8-27b-radiance
     - name: qwen3-8-27b-pro-radiance
-      displayName: qwen3.8-27b-pro-radiance
+      displayName: qwen3.8-27b-pro
       inferenceServiceRef:
         name: qwen3.8-27b-pro-radiance
     - name: qwen3-8-27b-context-radiance
-      displayName: qwen3.8-27b-context-radiance
+      displayName: qwen3.8-27b-context
       inferenceServiceRef:
         name: qwen3.8-27b-context-radiance
+    - name: qwen3-8-flash-next-radiance
+      displayName: qwen3.8-flash-next
+      inferenceServiceRef:
+        name: qwen3.8-flash-next-radiance
+    - name: qwen3-8-flash-next-gyro-m-strata
+      displayName: qwen3.8-flash-next-gyro-m
+      inferenceServiceRef:
+        name: qwen3.8-flash-next-gyro-m-strata
     - name: muse-glimmer-radiance
-      displayName: muse-glimmer-radiance
+      displayName: muse-glimmer
       inferenceServiceRef:
         name: muse-glimmer-radiance
     # - name: qwen3-6-35b-a3b
@@ -224,7 +235,7 @@ spec:
         provider: openai
         url: http://silverhawk.internal:1976
   rules:
-    - name: qwen3-8-27b-radiance
+    - name: qwen3-8-27b
       match:
         models:
           - qwen3.8-27b
@@ -234,7 +245,7 @@ spec:
           - qwen3-8-27b-pro-radiance
           - qwen3-8-27b-context-radiance
         poolActivation: IfIdle
-    - name: qwen3-8-27b-pro-radiance
+    - name: qwen3-8-27b-pro
       match:
         models:
           - qwen3.8-27b-pro
@@ -242,7 +253,7 @@ spec:
         backends:
           - qwen3-8-27b-pro-radiance
         poolActivation: Wait
-    - name: qwen3-8-27b-context-radiance
+    - name: qwen3-8-27b-context
       match:
         models:
           - qwen3.8-27b-context
@@ -250,7 +261,23 @@ spec:
         backends:
           - qwen3-8-27b-context-radiance
         poolActivation: Wait
-    - name: muse-glimmer-radiance
+    - name: qwen3-8-flash-next
+      match:
+        models:
+          - qwen3.8-flash-next
+      route:
+        backends:
+          - qwen3-8-flash-next-radiance
+        poolActivation: Wait
+    - name: qwen3-8-flash-next-gyro-m
+      match:
+        models:
+          - qwen3.8-flash-next-gyro-m
+      route:
+        backends:
+          - qwen3-8-flash-next-gyro-m-strata
+        poolActivation: Wait
+    - name: muse-glimmer
       match:
         models:
           - muse-glimmer
@@ -351,6 +378,20 @@ spec:
           - qwen3-8-27b-radiance
           - qwen3-8-27b-pro-radiance
           - qwen3-8-27b-context-radiance
+          - qwen3-8-flash-next-radiance
+          - qwen3-8-flash-next-gyro-m-strata
+          - muse-glimmer-radiance
+        poolActivation: IfIdle
+    - name: auto-vision-pool # use whatever vision-capable LLM is currently loaded, or load Qwen 3.8 27B Pro if idle and not already loaded. this pool exists to only allow requests to route to vision-capable models.
+      match:
+        models:
+          - auto-vision
+      route:
+        backends:
+          - qwen3-8-27b-pro-radiance
+          - qwen3-8-27b-radiance
+          - qwen3-8-27b-context-radiance
+          - qwen3-8-flash-next-radiance
           - muse-glimmer-radiance
         poolActivation: IfIdle
   proxy:
