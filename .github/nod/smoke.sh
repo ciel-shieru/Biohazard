@@ -7,6 +7,19 @@ cleanup() {
   docker network rm "$network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+# Check license files in the image that will be published.
+docker run --rm --network none --entrypoint /bin/sh nod-test:local -ec '
+  for path in \
+    /app/licenses/LICENSE /app/licenses/NOTICE \
+    /app/licenses/docker-cli/LICENSE /app/licenses/docker-cli/NOTICE \
+    /app/licenses/speech/NOTICE.md /app/licenses/speech/GPL-3.0.txt \
+    /app/desktop/licenses/speech.md \
+    /app/licenses/speech/sources.json /app/licenses/speech/spellophone-source.tar.gz \
+    /app/licenses/speech/espeak-ng-source.tar.gz \
+    /app/src/providers/local-speech/phonemizer-worker.ts; do
+    test -s "$path"
+  done
+'
 docker network create --internal "$network" >/dev/null
 docker run -d --name nod-smoke-db --network "$network" --network-alias postgres \
   -e POSTGRES_USER=nod -e POSTGRES_PASSWORD=smoke -e POSTGRES_DB=nod \
@@ -28,6 +41,7 @@ docker run -d --name nod-smoke-server --network "$network" --read-only --cap-dro
   -e DATABASE_URL=postgresql://nod:smoke@postgres:5432/nod \
   -e LLM_PROVIDER=compatible -e LLM_MODEL=fixture-model \
   -e OPENAI_COMPATIBLE_BASE_URL=http://model:8080/v1 -e NOD_TRUST_MODEL=selected \
+  -e NOD_COMPOSIO_PROXY_URL=http://127.0.0.1:1 \
   -e NOD_ANALYTICS_ENABLED=false -e NOD_FEEDBACK_ENABLED=false -e NOD_FEEDBACK_URL= \
   -e NOD_ONBOARDING_EMAIL_URL= -e NOD_TRACES_URL= -e OTEL_EXPORTER_OTLP_ENDPOINT= \
   -e TELEGRAM_ENABLED=false -e WHATSAPP_ENABLED=false nod-test:local >/dev/null

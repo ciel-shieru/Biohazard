@@ -29,8 +29,18 @@ jobs:
           ref: 6cebbf1a448eba950d97e907bef8435e3a4e8b33
           path: nod-upstream
           persist-credentials: false
-      # Pin the upstream Dockerfile inputs that have newer security updates.
-      - name: Update pinned Node base image
+      - name: Fetch verified Docker CLI license texts
+        run: |
+          set -euo pipefail
+          mkdir -p nod-upstream/docker-cli-licenses
+          base=https://raw.githubusercontent.com/docker/cli/fdd4b8e5da335e1d0d83d29af5045f57280cd694
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 60 "$base/LICENSE" -o nod-upstream/docker-cli-licenses/LICENSE
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 60 "$base/NOTICE" -o nod-upstream/docker-cli-licenses/NOTICE
+          printf '%s  %s\n' \
+            2d81ea060825006fc8f3fe28aa5dc0ffeb80faf325b612c955229157b8c10dc0 nod-upstream/docker-cli-licenses/LICENSE \
+            a8c869fbda819afb8d80e0ac19bac52e766bc6c19cb38cf94f52d64c4be2aab6 nod-upstream/docker-cli-licenses/NOTICE | sha256sum --check
+      # Pin upstream inputs and package the corresponding license and source material.
+      - name: Prepare pinned build and licenses
         run: |
           python3 - <<'PYCODE'
           from pathlib import Path
@@ -47,7 +57,20 @@ jobs:
           old = 'apt-get install -y --no-install-recommends ca-certificates '
           new = 'apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u2 '
           assert source.count(old) == 1
+          source = source.replace(old, new)
+          old = 'COPY src ./src'
+          new = old + "\nCOPY desktop/scripts/speech-sources.mjs ./desktop/scripts/speech-sources.mjs\nCOPY desktop/licenses/speech.md ./desktop/licenses/speech.md\nRUN node --input-type=module -e \"import { copySpeechSources } from './desktop/scripts/speech-sources.mjs'; await copySpeechSources({ root: '/app', target: '/app' })\""
+          assert source.count(old) == 1
+          source = source.replace(old, new)
+          old = 'COPY --chown=node:node docs/src/content/docs ./docs/src/content/docs'
+          new = old + '\nCOPY --chown=node:node LICENSE NOTICE ./licenses/\nCOPY --chown=node:node docker-cli-licenses/ ./licenses/docker-cli/\nCOPY --from=build --chown=node:node /app/licenses/speech ./licenses/speech/\nCOPY --from=build --chown=node:node /app/desktop/licenses/speech.md ./desktop/licenses/speech.md'
+          assert source.count(old) == 1
           path.write_text(source.replace(old, new))
+          ignore = Path('nod-upstream/.dockerignore')
+          exclusions = ignore.read_text()
+          assert exclusions.startswith('*\n')
+          assert '!LICENSE\n' not in exclusions and '!desktop/\n' not in exclusions
+          ignore.write_text(exclusions + '\n!LICENSE\n!NOTICE\n!desktop/\n!desktop/scripts/\n!desktop/scripts/speech-sources.mjs\n!desktop/licenses/\n!desktop/licenses/speech.md\n!docker-cli-licenses/\n!docker-cli-licenses/LICENSE\n!docker-cli-licenses/NOTICE\n')
           PYCODE
       - name: Build upstream self-host image
         run: docker build --file nod-upstream/deployment/self-host/Dockerfile --tag nod-test:local nod-upstream
