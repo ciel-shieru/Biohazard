@@ -1,0 +1,90 @@
+---
+name: Nod image
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/nod-image]
+    paths:
+      - .github/workflows/nod-image.yaml
+      - .github/nod/**
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.image-artifact.outputs.artifact-id }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Checkout Nod v0.9.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: n8n-io/nod
+          ref: 6cebbf1a448eba950d97e907bef8435e3a4e8b33
+          path: nod-upstream
+          persist-credentials: false
+      # Pin the upstream Dockerfile inputs that have newer security updates.
+      - name: Update pinned Node base image
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          path = Path('nod-upstream/deployment/self-host/Dockerfile')
+          source = path.read_text()
+          old = 'node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20'
+          new = 'node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54'
+          assert source.count(old) == 2
+          source = source.replace(old, new)
+          old = 'docker:29.8.2-cli@sha256:35cfcf893c20f2931f4909151b5407aaaeab711277de7ce8b8f521f095d54c32'
+          new = 'docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d'
+          assert source.count(old) == 1
+          source = source.replace(old, new)
+          old = 'apt-get install -y --no-install-recommends ca-certificates '
+          new = 'apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u2 '
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new))
+          PYCODE
+      - name: Build upstream self-host image
+        run: docker build --file nod-upstream/deployment/self-host/Dockerfile --tag nod-test:local nod-upstream
+      - name: Smoke test isolated server
+        run: bash .github/nod/smoke.sh
+      - name: Save tested image
+        run: docker save nod-test:local --output nod-image.tar
+      - name: Upload tested image
+        id: image-artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nod-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nod-image.tar
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    if: github.repository == 'ciel-shieru/Biohazard' && github.ref == 'refs/heads/feat/nod-image'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      packages: write
+    steps:
+      - name: Download tested image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+      - name: Load tested image
+        run: docker load --input nod-image.tar
+      - name: Publish tested image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${REPOSITORY_OWNER,,}/nod-server:nod-v0.9.0"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$REPOSITORY_OWNER" --password-stdin
+          docker tag nod-test:local "$image"
+          docker push "$image"
